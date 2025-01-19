@@ -1,87 +1,56 @@
 # 🚀 **Data-Centric Track**
 
-Welcome to the **Data-Centric Track** of the **Wake Vision Challenge**! 🎉
+This is my submission for the Data-Centric challenge
 
-The goal of this track is to **push the boundaries of tiny computer vision** by enhancing the data quality of the [Wake Vision Dataset](https://wakevision.ai/).
+# Pre-requisites
 
-🔗 **Learn More**: [Wake Vision Challenge Details](https://edgeai.modelnova.ai/challenges/details/1)
+## Setup environment
 
----
-
-## 🌟 **Challenge Overview**
-
-Participants are invited to:
-
-1. **Enhance the provided dataset** to improve person detection accuracy.
-2. Train the [MCUNet-VWW2 model](https://github.com/mit-han-lab/mcunet), a state-of-the-art person detection model, on the enhanced dataset.
-3. Assess quality improvements on the public test set.
-
-You can modify the **dataset** however you like, but the **model architecture must remain unchanged**. 🛠️
-
----
-
-## 🛠️ **Getting Started**
-
-### Step 1: Install Docker Engine 🐋
-
-First, install Docker on your machine:
-- [Install Docker Engine](https://docs.docker.com/engine/install/).
-
----
-
-### 💻 **Running Without a GPU**
-
-Run the following command inside the directory where you cloned this repository:
-
-```bash
-sudo docker run -it --rm -v $PWD:/tmp -w /tmp andregara/wake_vision_challenge:cpu python data_centric_track.py
+1- Create conda environment `conda create -n wakevision python=3.9`
+2- 
+```
+conda activate wakevision
+pip install fiftyone
+# create a 'dataset' folder and download the needed chunks of data from
+# [link](https://dataverse.harvard.edu/dataset.xhtml?persistentId=doi:10.791https://dataverse.harvard.edu/dataset.xhtml?persistentId=doi:10.7910/DVN/1HOPXC0/DVN/1HOPXC)
+# In my example I dowloaded wake-vision-10 (~7GB) + wake_vision_train_large.csv
+# Change column name in the .csv file to 'filepath'
 ```
 
-- This trains the [MCUNet-VWW2 model](https://github.com/mit-han-lab/mcunet) on the original dataset.
-- Modify the dataset to improve the model's test accuracy by correcting labels or augmenting data.
+2 - Create A FiftyOne Dataset from the csv data and assign ground_truth label field to each sample.  
+```
+# python3
+import fiftyone as fo
+wake_vision = fo.Dataset.from_dir(data_path="data", labels_path="data/wake_vision_train_large.csv", dataset_type=fo.types.CSVDataset, skip_missing_media=True, progress=True, include_all_data=True, persistent=True)
+# Create a Label Field for Ground Truth
+# Images with no GT are given a sample tag 'no_label'
+with fo.ProgressBar() as pb:
+    for sample in pb(wake_vision):
+        if sample.person:
+            if int(sample.person)==1:
+                sample["ground_truth"] = fo.Classification(label="person")
+                sample.save()
+                continue
+            elif int(sample.person)==0:
+                sample["ground_truth"] = fo.Classification(label="background")
+                sample.save()
+                continue
+        else:
+            sample.tags.append('no_label')
+            sample.save()
 
-💡 **Note**: The first execution may take several hours as it downloads the full dataset (~365 GB).
-
----
-
-### ⚡ **Running With a GPU**
-
-1. Install the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html).
-2. Verify your [GPU drivers](https://ubuntu.com/server/docs/nvidia-drivers-installation).
-
-Run the following command inside the directory where you cloned this repository:
-
-```bash
-sudo docker run --gpus all -it --rm -v $PWD:/tmp -w /tmp andregara/wake_vision_challenge:gpu python data_centric_track.py
+session = fo.launch_app(wake_vision)
 ```
 
-- This trains the [MCUNet-VWW2 model](https://github.com/mit-han-lab/mcunet) on the original dataset.
-- Modify the dataset to enhance test accuracy while keeping the model architecture unchanged.
+3- Data & Metadata
+3-1. Compute embeddings with Mobilenet  & Visualization
+3-2. Compute Similiarity
+3-2. Model predictions:
+3-2.1 MCUNet-VWW model predictions
+3-2.2 YOLO, Mobilenet, CLIP, Dino..
 
-💡 **Note**: The first execution may take several hours as it downloads the full dataset (~365 GB).
+4- Data Exploration
+4-1. Look for wrong Ground_truth & Fix it with CVAT
+4-2. Look through unlabeled data and Select Data to be labeled (Based on Uniqueness, model error, etc..)
 
----
-
-## 🎯 **Tips for Success**
-
-- **Focus on Data Quality**: Explore label correction, data augmentation, and other preprocessing techniques.
-- **Stay Efficient**: The dataset is large, so plan your modifications carefully.
-- **Collaborate**: Join the community discussion on [Discord](https://discord.com/channels/803180012572114964/1323721087170773002) to share ideas and tips!
-
----
-
-## 📚 **Resources**
-
-- [MCUNet-VWW2 Model Documentation](https://github.com/mit-han-lab/mcunet)
-- [Docker Documentation](https://docs.docker.com/)
-- [Wake Vision Dataset](https://wakevision.ai/)
-
----
-
-## 📞 **Contact Us**
-
-Have questions or need help? Reach out on [Discord](https://discord.com/channels/803180012572114964/1323721087170773002).
-
----
-
-🌟 **Happy Innovating and Good Luck!** 🌟
+## Model training
