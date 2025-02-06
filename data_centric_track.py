@@ -10,10 +10,12 @@ model_name = 'wv_quality_mcunet-320kb-1mb_vww'
 input_shape = (144,144,3)
 batch_size = 512
 learning_rate = 0.001
-epochs = 100
+epochs = 50
 
+# Original HuggingFace Data Loader
+#
 #load dataset
-ds = load_dataset("Harvard-Edge/Wake-Vision")
+#ds = load_dataset("Harvard-Edge/Wake-Vision")
 
 #consider using also the large split
 #which contains 5,760,428 images
@@ -23,12 +25,38 @@ ds = load_dataset("Harvard-Edge/Wake-Vision")
 
 #correct some labels
 #e.g. ds['train_quality'][0]['person'] = 1
-    
-train_ds = ds['train_quality'].to_tf_dataset(columns='image', label_cols='person')
 
-val_ds = ds['validation'].to_tf_dataset(columns='image', label_cols='person')
-test_ds = ds['test'].to_tf_dataset(columns='image', label_cols='person')
+#train_ds = ds['train_quality'].to_tf_dataset(columns='image', label_cols='person')
 
+#val_ds = ds['validation'].to_tf_dataset(columns='image', label_cols='person')
+#test_ds = ds['test'].to_tf_dataset(columns='image', label_cols='person')
+#
+
+# Custom Data Loader
+# Define dataset path
+dataset_path = "/tmp/data"
+
+# Load training dataset
+train_ds = tf.keras.utils.image_dataset_from_directory(
+    dataset_path + "/train",
+    image_size=(144, 144),  # Resize images to match model input
+    batch_size=32,
+    shuffle=True
+)
+# Load validation dataset
+val_ds = tf.keras.utils.image_dataset_from_directory(
+    dataset_path + "/val",
+    image_size=(144, 144),  # Resize images to match model input
+    batch_size=32,
+    shuffle=True
+)
+# Load testing dataset
+test_ds = tf.keras.utils.image_dataset_from_directory(
+    dataset_path + "/test",
+    image_size=(144, 144),  # Resize images to match model input
+    batch_size=1,
+    shuffle=True
+)
 #some preprocessing 
 data_preprocessing = tf.keras.Sequential([
     #resize images to desired input shape
@@ -40,13 +68,15 @@ data_augmentation = tf.keras.Sequential([
     #apply some data augmentation 
     tf.keras.layers.RandomFlip("horizontal"),
     tf.keras.layers.RandomRotation(0.2)])
-    
-train_ds = train_ds.shuffle(1000).map(lambda x, y: (data_augmentation(x, training=True), y), num_parallel_calls=tf.data.AUTOTUNE).batch(batch_size).prefetch(tf.data.AUTOTUNE)
-val_ds = val_ds.map(lambda x, y: (data_preprocessing(x, training=True), y), num_parallel_calls=tf.data.AUTOTUNE).batch(batch_size).prefetch(tf.data.AUTOTUNE)
+
+# Customization: Batching is removed from the following data loading steps not to add an extra dimension    
+train_ds = train_ds.shuffle(1000).map(lambda x, y: (data_augmentation(x, training=True), y), num_parallel_calls=tf.data.AUTOTUNE).prefetch(tf.data.AUTOTUNE)
+val_ds = val_ds.map(lambda x, y: (data_preprocessing(x, training=True), y), num_parallel_calls=tf.data.AUTOTUNE).prefetch(tf.data.AUTOTUNE)
 test_ds = test_ds.map(lambda x, y: (data_preprocessing(x, training=True), y), num_parallel_calls=tf.data.AUTOTUNE).batch(1).prefetch(tf.data.AUTOTUNE)
 
 #fixed architecture
 #do not change it
+print('**** DEFINING MODEL ***')
 inputs = keras.Input(shape=input_shape)
 #
 x = keras.layers.ZeroPadding2D(padding=(1, 1))(inputs)
@@ -326,7 +356,7 @@ x = keras.layers.Conv2D(2, (1,1), padding='valid')(x)
 outputs = keras.layers.Reshape((2,))(x)
 
 model = keras.Model(inputs, outputs)
-
+print("**** MODEL DEFINED ****\n*\n*\n*")
 #compile model
 opt = tf.keras.optimizers.Adam(learning_rate=learning_rate)
 
@@ -346,6 +376,7 @@ model_checkpoint_callback = tf.keras.callbacks.ModelCheckpoint(
 model.fit(train_ds, epochs=epochs, validation_data=val_ds, callbacks=[model_checkpoint_callback])
 
 #Post Training Quantization (PTQ)
+print("***** PTQ ******")
 model = tf.keras.models.load_model(model_name + ".tf")
 
 def representative_dataset():
@@ -363,6 +394,8 @@ tflite_quant_model = converter.convert()
 with open(model_name + ".tflite", 'wb') as f:
     f.write(tflite_quant_model)
     
+print("$$$$$ Model Converted and saved in tflite format $$$$$$")
+
 #Test quantized model
 interpreter = tf.lite.Interpreter(model_name + ".tflite")
 interpreter.allocate_tensors()
