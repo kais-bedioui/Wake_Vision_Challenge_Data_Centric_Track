@@ -66,7 +66,7 @@ def generate_fo_metadata(dataset):
     dataset.compute_embeddings(model=embeddings_model, progress=True, embeddings_field="mobilenet_embeddings", skip_failures=True)
     # Compute 2D Visualization using UMAP dimensionality reduction.
     # pre-requisite: pip install umap-learn
-    _ = fob.compute_visualization(
+    r_viz = fob.compute_visualization(
         dataset,
         embeddings="mobilenet_embeddings",
         brain_key="mobilenet_viz",
@@ -76,16 +76,16 @@ def generate_fo_metadata(dataset):
         skip_failures=True,
         progress=True
     )
-    _ = fob.compute_uniqueness(
-        dataset, 
-        embeddings="mobilenet_embeddings", 
-        batch_size=4, 
-        num_workers=8, 
-        skip_failures=True, 
+    r_uniqueness = fob.compute_uniqueness(
+        dataset,
+        embeddings="mobilenet_embeddings",
+        batch_size=4,
+        num_workers=8,
+        skip_failures=True,
         progress=True
     )
 
-    _ = fob.compute_representativeness(
+    r_rep = fob.compute_representativeness(
         dataset,
         embeddings="mobilenet_embeddings",
         progress=True
@@ -148,7 +148,7 @@ def apply_yolo_detections(dataset, yolo_version="yolo11x.pt"):
                 sample["yolo_preds"] = fo.Detections(detections=detections)
                 sample.save()
 
-def correct_false_background_images(dataset):
+def correct_images_background_to_person(dataset):
     """
     This function will use YOLO-detections to catch images that are labeled as 'background' or not-person
     but actually contain a human.
@@ -169,10 +169,72 @@ def correct_false_background_images(dataset):
     with fo.ProgressBar() as pb:
         for sample in pb(wrong_backgorund_data):
            sample.ground_truth.label = "person"
-           sample.person = int(1)
+           sample.person = '1'
+           sample.save()
 
+    dataset.savet()
+
+def correct_images_person_to_background(dataset):
+    """
+    This function will use the absence of 'person'-class YOLO-detections to catch 
+    images that are labeled as 'person' but are actually background.
+    """
+    wrong_person_data = (
+        dataset.
+        match_labels(
+            fields="ground_truth", 
+            filter=F("label")=='person').
+            filter_labels(
+                "yolo_preds",
+                F("label")!="person"
+            )
+    )
+    
+    # Parse through the obtained view and correct (reverse) ground_truth info
+    with fo.ProgressBar() as pb:
+        for sample in pb(wrong_person_data):
+           sample.ground_truth.label = "background"
+           sample.person = '0'
+           sample.save()
+
+    dataset.savet()
+
+def unsupervised_labelling(dataset):
+    """
+    Assign ground_truth labels to unlabeled images in an usupervised manner.
+    If an image contains 'person' YOLO-detection then it will be annotated as 'person'
+    otherwise 'background'
+    """
+
+    # Easy method to get unlabled data (Check line 44)
+    unlabeled = dataset.match_tags('no_label')
+    # OR
+    #unlabeled = dataset.match_labels(fields="ground_truth", filter=F() == None)
+    unlabeled_person_data = unlabeled.match_labels(fields="yolo_dets", filter=(F("label") == 'person'))
+    unlabeled_background_data = unlabeled.match_labels(fields="yolo_dets", filter=(F("label") != 'person')
+
+    with fo.ProgressBar() as pb:
+        for sample in pb(unlabeled_person_data):
+            sample['ground_truth'] = fo.Classification(label='person')
+            sample['person'] = '1'
+            sample.tags.remove('no_label')
+            sample.save()
+
+    with fo.ProgressBar() as pb:
+        for sample in pb(unlabeled_background_data):
+            sample['ground_truth'] = fo.Classification(label='background')
+            sample['person'] = '0'
+            sample.tags.remove('no_label')
+            sample.save()
+
+    dataset.save()
 
 if __name__ == "__main__":
+
+
+    UNIQUENESS_THRESHOLD = 0.7
+    TRAIN_DATA_SIZE = 100000
+    export_dir = "/tmp/tf-wakevision-dataset"
 
     data_path="data",
     labels_path="data/wake_vision_train_large.csv",
@@ -180,5 +242,52 @@ if __name__ == "__main__":
         data_path==data_path,
         labels_path=labels_path,
     )
+    
     generate_fo_metadata(wake_vision)
+    
     apply_yolo_detections(wake_vision, yolo_version="yolo11x.pt")
+    
+    correct_images_background_to_person(wake_vision)
+    
+    correct_images_person_to_background(wake_vision)
+    
+    unsupervised_labelling(wake_vision)
+
+    # Select train,val, test data
+    # Sort in descending order of representativeness, keep dataset with uniqueness score
+    # higher than UNIQUENESS_THRESHOLD to reduce image redundancies and select
+    # top TRAIN_DATA_SIZE images
+    dataset = (wake_vision.
+               sort_by("representativeness", reverse=True).
+               match("uniqueness", F("uniqueness") >= UNIQUENESS_THRESHOLD).
+               limit(TRAIN_DATA_SIZE)
+    )
+
+    test_ds = dataset[:int(0.1*len(dataset))]
+    test_ds.export(
+        export_dir=os.path.join(export_dir, "test")
+        dataset_type=fo.types.ImageClassificationDirectoryTree,
+        label_field="ground_truth",
+        export_media=True
+    )
+    
+    val_ds = dataset[int(0.1*len(dataset)):int(0.2*len(dataset))]
+    val_ds.export(
+        export_dir=os.path.join(export_dir, "val")
+        dataset_type=fo.types.ImageClassificationDirectoryTree,
+        label_field="ground_truth",
+        export_media=True
+    )
+
+    train_ds = dataset[int(0.2*len(dataset)):]
+    train_ds.export(
+        export_dir=os.path.join(export_dir, "train")
+        dataset_type=fo.types.ImageClassificationDirectoryTree,
+        label_field="ground_truth",
+        export_media=True
+    )
+
+    print('Dataset Created and Exported')
+
+
+
