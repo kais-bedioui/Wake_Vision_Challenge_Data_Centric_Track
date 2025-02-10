@@ -57,7 +57,7 @@ test_ds = tf.keras.utils.image_dataset_from_directory(
     batch_size=1,
     shuffle=True
 )
-#some preprocessing 
+#some preprocessing
 data_preprocessing = tf.keras.Sequential([
     #resize images to desired input shape
     tf.keras.layers.Resizing(input_shape[0], input_shape[1])])
@@ -72,7 +72,7 @@ data_augmentation = tf.keras.Sequential([
 # Customization: Batching is removed from the following data loading steps not to add an extra dimension    
 train_ds = train_ds.shuffle(1000).map(lambda x, y: (data_augmentation(x, training=True), y), num_parallel_calls=tf.data.AUTOTUNE).prefetch(tf.data.AUTOTUNE)
 val_ds = val_ds.map(lambda x, y: (data_preprocessing(x, training=True), y), num_parallel_calls=tf.data.AUTOTUNE).prefetch(tf.data.AUTOTUNE)
-test_ds = test_ds.map(lambda x, y: (data_preprocessing(x, training=True), y), num_parallel_calls=tf.data.AUTOTUNE).batch(1).prefetch(tf.data.AUTOTUNE)
+test_ds = test_ds.map(lambda x, y: (data_preprocessing(x, training=True), y), num_parallel_calls=tf.data.AUTOTUNE).prefetch(tf.data.AUTOTUNE)
 
 #fixed architecture
 #do not change it
