@@ -1,25 +1,41 @@
 # 🚀 **Data-Centric Track**
 
-This is my submission for the Data-Centric challenge
+This is my submission for the Data-Centric challenge described in [Challenge card](./wake_vision_challenge_description.md)
 
+## Submission requirements
+
+- [x] [tflite model](./wv_quality_mcunet-320kb-1mb_vww.tflite)
+
+- [x] [Technical report](README.md)
+
+- [x] [Data improvement script](data_filtering_workflow.py)
+
+![Contest Backdrop](assets/contest-backdrop.png)
 # Pre-requisites
 
 ## Setup environment
 
 1- Create conda environment `conda create -n wakevision python=3.9`
-2- 
+
+and install the following requirements
 ```
-conda activate wakevision
-pip install fiftyone
-# create a 'dataset' folder and download the needed chunks of data from 
-
-[link](https://dataverse.harvard.edu/dataset.xhtml?persistentId=doi:10.791https://dataverse.harvard.edu/dataset.xhtml?persistentId=doi:10.7910/DVN/1HOPXC0/DVN/1HOPXC)
-
-# In my example I dowloaded wake-vision-10 (~7GB) + wake_vision_train_large.csv
-# Change column name in the .csv file to 'filepath'
+pip install -U fiftyone
+pip install ultralytics
+pip install umap-learn
 ```
 
-2 - Create A FiftyOne Dataset from the csv data and assign ground_truth label field to each sample.  
+2 - Create A FiftyOne Dataset from the csv data and assign ground_truth label field to each sample. 
+
+Create a 'dataset' folder and download the needed chunks of the Wake-Vision data
+In my example I dowloaded wake-vision-10 (~7GB) + wake_vision_train_large.csv
+Change column name in the .csv file to 'filepath'
+
+
+Data can be found at [link](https://dataverse.harvard.edu/dataset.xhtml?persistentId=doi:10.791https://dataverse.harvard.edu/dataset.xhtml?persistentId=doi:10.7910/DVN/1HOPXC0/DVN/1HOPXC).
+
+
+ ## Initializing the FiftyOne Data
+
 ```
 # python3
 import fiftyone as fo
@@ -43,57 +59,131 @@ with fo.ProgressBar() as pb:
 
 session = fo.launch_app(wake_vision)
 ```
+![FiftyOne App Overview](assets/fo_overview.png)
 
-3- Data & Metadata
-3-1. Compute embeddings with Mobilenet  & Visualization
+
+## Data & Metadata
+### Compute embeddings with Mobilenet  & Visualization
 ```
 import fiftyone as fo
 import fiftyone.zoo as foz
 import fiftyone.brain as fob
 
 wake_vision = fo.load_dataset('wake-vision-10')
+
 wake_vision.compute_metadata()
+
 embeddings_model = foz.load_model_zoo("mobilenet-v2-imagenet-torch")
-wake_vision.compute_embeddings(model=embeddings_model, progress=True, embeddings_field="mobilenet_embeddings", skip_failures=True)
+
+wake_vision.compute_embeddings(model=embeddings_model, progress=True, 
+
+embeddings_field="mobilenet_embeddings", skip_failures=True)
+
 # Compute 2D Visualization using UMAP dimensionality reduction.
 # pre-requisite: pip install umap-learn
-results = fob.compute_visualization(wake_vision, embeddings="mobilenet_embeddings", brain_key="mobilenet_viz", method="umap", batch_size=4, num_workers=8, skip_failures=True, progress=True)
-# results = fob.compute_visualization(non_labeled, embeddings="mobilenet_embeddings", brain_key="mobilenet_viz_unlabeled", method="umap", batch_size=4, num_workers=8, skip_failures=True, progress=True)
-results_uniq = fob.compute_uniqueness(wake_vision, embeddings="mobilenet_embeddings", batch_size=4, num_workers=8, skip_failures=True, progress=True)
-```
-3-2. Compute Similiarity
-3-2. Model predictions:
-3-2.1 MCUNet-VWW model predictions
-3-2.2 YOLO, Mobilenet, CLIP, Dino..
+results = fob.compute_visualization(
+    wake_vision, 
+    embeddings="mobilenet_embeddings", 
+    brain_key="mobilenet_viz", 
+    method="umap"
+)
 
-4- Data Exploration
+results_uniq = fob.compute_uniqueness(wake_vision, embeddings="mobilenet_embeddings")
+
+results_representativeness = fob.compute_representativeness(
+    wake_vision,
+    embeddings="mobilenet_embeddings"
+)
+```
+![Embeddings](assets/mobilenet_embeddings.png)
+
+Check [data_filtering_workflow.py](./data_filtering_workflow.py) for the detailed integration of these methods
+
+### Data Exploration
+
 4-1. Look for wrong Ground_truth & Fix it
   The approach I followed here was to run a YOLO-object detection model to get multi-labels object detections.
   Then I selected images with 'person' object detections while having a 'background' ground truth class.
   ```
   # Load YOLO model and apply it to the data
   from ultralytics imoprt YOLO
-  det_yolo = YOLO("yolo11m.pt")
-  wake_vision.apply_model(det_yolo, label_field="yolo_dets", batch_size=8, classes=[0], progress=True) #Applying selected classes, use GPU
-  wrong_backgorund_data = wake_vision.match_labels(fields="ground_truth",filter=fo.ViewField("label")=='background').filter_labels("yolo_dets", fo.ViewField("label")=="person") # Preferably add a filter condition on person detection confidence > 0.5
   
+  det_yolo = YOLO("yolo11m.pt")
+
+  wake_vision.apply_model(det_yolo, label_field="yolo_dets" ...)
+
+  wrong_person_data = (wake_vision.
+    match_labels(fields="ground_truth", filter=fo.ViewField("label")=='person').filter_labels("yolo_dets", fo.ViewField("label")!="person")
+  )
+```
+
+This will expose mislabelling cases like the image below:
+![Ceci n'est pas un pussy cat!!](assets/wrong_labeled_images.png)
+
+
+```python
   with fo.ProgressBar() as pb:
     for sample in pb(wrong_backgorund_data):
        sample.ground_truth.label = "person"
        sample.person = int(1)
+       sample.save()
+```
 
-Inversely I select images with ground_truth value as person, and then I ommit samples where yolo-detection model didn't detect a person. Most of these cases would represent a falsely labeled image.
-Check screenshots from 26-01-2025 to showcase some of these mistakes
+Inversely I select images with ground_truth value as background, and then I lookfor yolo-detection with class `person`. Most of these cases would represent a falsely labeled image.
 
 
-  ```
-4-2. Look through unlabeled data and Select Data to be labeled (Based on Uniqueness, model error, etc..)
+### Unsupervised labelling of non-labeled images
+
+```python
+person_images = vw.match_tags('no_label').match_labels(fields="yolo_dets", filter=fo.ViewField("label")=="person").filter_labels("yolo_dets", fo.ViewField("confidence")>0.4)
+with fo.ProgressBar() as pb:
+  for sample in pb(person_images):
+    sample['ground_truth'] = fo.Classification(label="person")
+    sample['person'] = '1'
+    sample.tags.remove('no_label')
+    sample.tags.append('person')
+    sample.save()
+
+# Assuming remaining images are background images
+background_images = vw.match_tags('no_label')
+with fo.ProgressBar() as pb:
+  for sample in pb(background_images):
+    sample['ground_truth'] = fo.Classification(label="background")
+    sample['person'] = '0'
+    sample.tags.remove('no_label')
+    sample.tags.append('background')
+    sample.save()
+```
 
 ## Model training
 
 ### 1st experience
 
 First, I exported the unmodified `wake-vision-10` to a Classification Directory dataset
+```
+train_ds = ...
+
+train_ds.export(
+    export_dir=(EXPORT_DIR, 'train'),
+    dataset_type=fo.types.ImageClassificationDirectoryTree,
+    label_field="ground_truth",
+    export_media=True,
+)
+val_ds = ...
+val_ds.export(
+    export_dir=(EXPORT_DIR, 'val'),
+    dataset_type=fo.types.ImageClassificationDirectoryTree,
+    label_field="ground_truth",
+    export_media=True,
+)
+test_ds = ...
+test_ds.export(
+    export_dir=(EXPORT_DIR, 'test'),
+    dataset_type=fo.types.ImageClassificationDirectoryTree,
+    label_field="ground_truth",
+    export_media=True,
+)
+```
 ```
 dataset
 
@@ -162,5 +252,6 @@ This created a Baseline .tflite VWW_MCU_NET model to compare with, named "vww_mc
 
 ### 2nd experience
 
-After doing data improvements with Fiftyone, I similarily export the newly obtained **labeled** dataset to a Classification Directory and re-run training with **same hyperparameters**
-This creates a checkpoint "vww_mcu_net_submission.tflite"
+After doing data improvements with Fiftyone, I similarily export the newly obtained **labeled** dataset to a Classification Directory and re-run training with **same hyperparameters**.
+
+This created the checkpoint "wv_quality_mcunet-320kb-1mb_vww.tflite" which achieved `Tflite model test accuracy: 0.7102` over local test set
